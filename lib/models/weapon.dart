@@ -18,6 +18,9 @@ class Weapon {
   double gunCooldown;
   static const gunFireRate = 1.5; // seconds between shots
 
+  // Tracked snail screen position for aiming (updated every frame)
+  Offset? aimTarget;
+
   Weapon({
     required this.type,
     required this.col,

@@ -27,7 +27,7 @@ class GameController extends ChangeNotifier {
   WeaponType selectedWeapon = WeaponType.saltGun;
 
   // Offset for rendering origin
-  late Offset renderOrigin;
+  Offset renderOrigin = Offset.zero;
 
   GameController({required this.map}) {
     _startWave();
@@ -100,6 +100,9 @@ class GameController extends ChangeNotifier {
           lerpDouble(posA.dx, posB.dx, frac)!,
           lerpDouble(posA.dy, posB.dy, frac)!,
         );
+        // Track movement direction so the painter can flip the sprite
+        final vel = posB - posA;
+        if (vel.distance > 0.01) snail.velocity = vel;
       }
 
       // Reached lettuce
@@ -132,6 +135,7 @@ class GameController extends ChangeNotifier {
           _processCryingEye(weapon, dt);
           break;
         case WeaponType.saltGun:
+          _trackGunTarget(weapon);
           weapon.gunCooldown -= dt;
           if (weapon.gunCooldown <= 0) {
             _fireGun(weapon);
@@ -164,9 +168,10 @@ class GameController extends ChangeNotifier {
     }
   }
 
-  void _fireGun(Weapon gun) {
+  /// Finds the closest living snail within range and stores its screen centre
+  /// in [gun.aimTarget] so the painter can rotate the barrel toward it.
+  void _trackGunTarget(Weapon gun) {
     final gunScreen = IsometricMap.gridToScreen(gun.col, gun.row, renderOrigin);
-    // Find closest snail
     Snail? target;
     double minDist = double.infinity;
     for (final snail in snails) {
@@ -177,8 +182,17 @@ class GameController extends ChangeNotifier {
         target = snail;
       }
     }
-    if (target == null || minDist > 200) return;
-    final dir = (target.screenPos - gunScreen);
+    gun.aimTarget = (target != null && minDist <= 200)
+        ? target.screenPos +
+            const Offset(IsometricMap.tileWidth / 2, IsometricMap.tileHeight / 2)
+        : null;
+  }
+
+  void _fireGun(Weapon gun) {
+    if (gun.aimTarget == null) return;
+    final gunScreen = IsometricMap.gridToScreen(gun.col, gun.row, renderOrigin);
+    final dir = gun.aimTarget! - gunScreen;
+    if (dir.distance < 1) return;
     final norm = dir / dir.distance;
     projectiles.add(SaltProjectile(
       position: gunScreen,

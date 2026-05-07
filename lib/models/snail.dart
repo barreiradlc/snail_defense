@@ -16,6 +16,9 @@ class Snail {
   // Crying effect: position where eye is targeting
   double cryTimer; // remaining cry time for visual effect
 
+  // Screen-space movement direction (updated each frame by the controller)
+  Offset velocity = Offset.zero;
+
   Snail({
     required this.pathProgress,
     required this.speed,
