@@ -21,6 +21,10 @@ class _GameScreenState extends State<GameScreen>
   double _lastTime = 0.0;
 
   static const _toolbarHeight = 80.0;
+  static const _panSpeed = 250.0;
+
+  Offset _cameraOffset = Offset.zero;
+  Offset _joystickDelta = Offset.zero;
 
   @override
   void initState() {
@@ -40,6 +44,14 @@ class _GameScreenState extends State<GameScreen>
     final dt = min(now - _lastTime, 0.05); // cap at 50ms
     _lastTime = now;
     _time = now;
+
+    if (_joystickDelta != Offset.zero) {
+      _cameraOffset += _joystickDelta * _panSpeed * dt;
+      _cameraOffset = Offset(
+        _cameraOffset.dx.clamp(-640.0, 640.0),
+        _cameraOffset.dy.clamp(-320.0, 320.0),
+      );
+    }
 
     setState(() {
       _controller.update(dt);
@@ -138,10 +150,14 @@ class _GameScreenState extends State<GameScreen>
     return LayoutBuilder(builder: (context, constraints) {
       // Center the map
       final mapW = (_map.cols + _map.rows) * (IsometricMap.tileWidth / 2);
+      final mapH = (_map.cols + _map.rows) * (IsometricMap.tileHeight / 2);
+      final needsJoystick =
+          mapW > constraints.maxWidth || mapH > constraints.maxHeight;
+
       _controller.renderOrigin = Offset(
         (constraints.maxWidth - mapW) / 2 + _map.rows * (IsometricMap.tileWidth / 2),
         20,
-      );
+      ) + _cameraOffset;
 
       return Stack(
         children: [
@@ -154,6 +170,14 @@ class _GameScreenState extends State<GameScreen>
               ),
             ),
           ),
+          if (needsJoystick)
+            Positioned(
+              left: 16,
+              bottom: 16,
+              child: _JoystickWidget(
+                onMove: (delta) => _joystickDelta = delta,
+              ),
+            ),
           if (_controller.status == GameStatus.victory)
             _GameOverlay(
               title: '🎉 Vitória!',
@@ -306,4 +330,96 @@ class _GameOverlay extends StatelessWidget {
       ),
     );
   }
+}
+// ── Virtual joystick ────────────────────────────────────────────────────────
+
+class _JoystickWidget extends StatefulWidget {
+  final ValueChanged<Offset> onMove;
+  const _JoystickWidget({required this.onMove});
+
+  @override
+  State<_JoystickWidget> createState() => _JoystickWidgetState();
+}
+
+class _JoystickWidgetState extends State<_JoystickWidget> {
+  static const double _outerR = 38.0;
+  static const double _thumbR = 16.0;
+  Offset _thumb = Offset.zero;
+
+  void _onPanStart(DragStartDetails d) => _updateThumb(d.localPosition);
+  void _onPanUpdate(DragUpdateDetails d) => _updateThumb(d.localPosition);
+  void _onPanEnd(DragEndDetails _) {
+    setState(() => _thumb = Offset.zero);
+    widget.onMove(Offset.zero);
+  }
+
+  void _updateThumb(Offset local) {
+    final center = Offset(_outerR, _outerR);
+    var delta = local - center;
+    if (delta.distance > _outerR) delta = delta / delta.distance * _outerR;
+    setState(() => _thumb = delta);
+    widget.onMove(delta / _outerR);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onPanStart: _onPanStart,
+      onPanUpdate: _onPanUpdate,
+      onPanEnd: _onPanEnd,
+      child: CustomPaint(
+        size: Size(_outerR * 2, _outerR * 2),
+        painter: _JoystickPainter(thumb: _thumb, outerR: _outerR, thumbR: _thumbR),
+      ),
+    );
+  }
+}
+
+class _JoystickPainter extends CustomPainter {
+  final Offset thumb;
+  final double outerR;
+  final double thumbR;
+
+  const _JoystickPainter({
+    required this.thumb,
+    required this.outerR,
+    required this.thumbR,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = Offset(outerR, outerR);
+
+    // Outer ring fill
+    canvas.drawCircle(c, outerR, Paint()..color = const Color(0x26FFFFFF));
+    // Outer ring border
+    canvas.drawCircle(
+      c,
+      outerR,
+      Paint()
+        ..color = const Color(0x88FFFFFF)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2,
+    );
+    // Thumb drop shadow
+    canvas.drawCircle(
+      c + thumb + const Offset(1, 2),
+      thumbR,
+      Paint()..color = const Color(0x44000000),
+    );
+    // Thumb fill
+    canvas.drawCircle(c + thumb, thumbR, Paint()..color = const Color(0x99FFFFFF));
+    // Thumb border
+    canvas.drawCircle(
+      c + thumb,
+      thumbR,
+      Paint()
+        ..color = const Color(0xCCFFFFFF)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_JoystickPainter old) => old.thumb != thumb;
 }
