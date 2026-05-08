@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'dart:ui' show lerpDouble;
 import 'package:flutter/material.dart';
 import '../models/iso_map.dart';
 import '../models/snail.dart';
@@ -218,6 +219,65 @@ class GamePainter extends CustomPainter {
         ? snail.dyingTimer / Snail.dyingDuration
         : 1.0;
 
+    // ── Type-based color palette ──────────────────────────────
+    final Color bodyBase, bodyMid, bodySide, headColor, antColor, antTipColor;
+    final List<Color> shellWedges, shellInner;
+    switch (snail.snailType) {
+      case SnailType.silver:
+        bodyBase    = const Color(0xFF707070);
+        bodyMid     = const Color(0xFFB8B8B8);
+        bodySide    = const Color(0xFF909090);
+        headColor   = const Color(0xFFAAAAAA);
+        antColor    = const Color(0xFF909090);
+        antTipColor = const Color(0xFFD0D0D0);
+        shellWedges = const [
+          Color(0xFFDDDDDD), Color(0xFFC4C4C4), Color(0xFFA0A0A0),
+          Color(0xFF808080), Color(0xFF606060), Color(0xFF787878),
+          Color(0xFFB0B0B0), Color(0xFFCCCCCC),
+        ];
+        shellInner = const [
+          Color(0xFF555555), Color(0xFF444444), Color(0xFF555555),
+          Color(0xFF666666), Color(0xFF707070), Color(0xFF666666),
+          Color(0xFF555555), Color(0xFF444444),
+        ];
+        break;
+      case SnailType.golden:
+        bodyBase    = const Color(0xFF8B6914);
+        bodyMid     = const Color(0xFFDAA520);
+        bodySide    = const Color(0xFFC49A28);
+        headColor   = const Color(0xFFFFD700);
+        antColor    = const Color(0xFFDAA520);
+        antTipColor = const Color(0xFFFFE55C);
+        shellWedges = const [
+          Color(0xFFFFE040), Color(0xFFDAA520), Color(0xFFB8860B),
+          Color(0xFF8B6914), Color(0xFF705208), Color(0xFF8B6914),
+          Color(0xFFC49A28), Color(0xFFEEC900),
+        ];
+        shellInner = const [
+          Color(0xFF7B4A00), Color(0xFF6B3A00), Color(0xFF7B4A00),
+          Color(0xFF8B5A10), Color(0xFF9B6A20), Color(0xFF8B5A10),
+          Color(0xFF7B4A00), Color(0xFF6B3A00),
+        ];
+        break;
+      default: // normal
+        bodyBase    = const Color(0xFFA07030);
+        bodyMid     = const Color(0xFFD4A055);
+        bodySide    = const Color(0xFFC09040);
+        headColor   = const Color(0xFFC89848);
+        antColor    = const Color(0xFFB88040);
+        antTipColor = const Color(0xFFE0A060);
+        shellWedges = const [
+          Color(0xFFE09858), Color(0xFFD08040), Color(0xFFB56A30),
+          Color(0xFF9B5520), Color(0xFF7B3B10), Color(0xFF8B4520),
+          Color(0xFFC07030), Color(0xFFD88848),
+        ];
+        shellInner = const [
+          Color(0xFF6B2B05), Color(0xFF5B1B00), Color(0xFF6B2B05),
+          Color(0xFF7B3B10), Color(0xFF8B4520), Color(0xFF7B3B10),
+          Color(0xFF6B2B05), Color(0xFF5B1B00),
+        ];
+    }
+
     // The sprite faces LEFT by default. Flip it when moving right (dx > 0).
     final flipX = snail.velocity.dx > 0 ? -1.0 : 1.0;
 
@@ -235,21 +295,21 @@ class GamePainter extends CustomPainter {
     _poly(canvas, [
       const Offset(-10, 4), const Offset(8, 3),
       const Offset(8, 7),   const Offset(-10, 7),
-    ], const Color(0xFFA07030).withValues(alpha: a));
+    ], bodyBase.withValues(alpha: a));
     _poly(canvas, [
       const Offset(-10, 1), const Offset(8, 0),
       const Offset(8, 3),   const Offset(-10, 4),
-    ], const Color(0xFFD4A055).withValues(alpha: a));
+    ], bodyMid.withValues(alpha: a));
     _poly(canvas, [
       const Offset(-10, 1), const Offset(-10, 7),
       const Offset(-13, 5), const Offset(-13, 2),
-    ], const Color(0xFFC09040).withValues(alpha: a));
+    ], bodySide.withValues(alpha: a));
 
     // ── Head ──
     _poly(canvas, [
       const Offset(-14, 0), const Offset(-9, -3),
       const Offset(-8, 2),  const Offset(-13, 3),
-    ], const Color(0xFFC89848).withValues(alpha: a));
+    ], headColor.withValues(alpha: a));
     // Eye socket
     _poly(canvas, [
       const Offset(-13, -1), const Offset(-11, -2),
@@ -261,7 +321,7 @@ class GamePainter extends CustomPainter {
 
     // ── Antennae ──
     final antPaint = Paint()
-      ..color = const Color(0xFFB88040).withValues(alpha: a)
+      ..color = antColor.withValues(alpha: a)
       ..strokeWidth = 1.5
       ..strokeCap = StrokeCap.round;
     canvas.drawLine(
@@ -269,12 +329,15 @@ class GamePainter extends CustomPainter {
     canvas.drawLine(
         const Offset(-12, -1), const Offset(-14, -8), antPaint);
     canvas.drawCircle(const Offset(-17, -7), 1.5,
-        Paint()..color = const Color(0xFFE0A060).withValues(alpha: a));
+        Paint()..color = antTipColor.withValues(alpha: a));
     canvas.drawCircle(const Offset(-14, -8), 1.5,
-        Paint()..color = const Color(0xFFE0A060).withValues(alpha: a));
+        Paint()..color = antTipColor.withValues(alpha: a));
 
     // ── Shell ──
-    _drawShellLocal(canvas, 3.0, -5.0, a);
+    _drawShellLocal(canvas, 3.0, -5.0, a, shellWedges, shellInner);
+
+    // ── Trait accessory ──
+    _drawSnailTrait(canvas, snail.trait, a, time);
 
     // Cry tear drop (appears on head side, mirrors correctly after flip)
     if (snail.cryTimer > 0) {
@@ -303,11 +366,211 @@ class GamePainter extends CustomPainter {
     }
 
     canvas.restore();
+
+    // ── HP bar (silver / golden only) ────────────────────────
+    if (snail.snailType != SnailType.normal) {
+      const barW = 28.0;
+      const barH = 4.0;
+      final barX = cx - barW / 2;
+      final barY = cy - 22.0;
+      final ratio = snail.hp / snail.maxHp;
+      // Dark border
+      canvas.drawRect(
+        Rect.fromLTWH(barX - 1, barY - 1, barW + 2, barH + 2),
+        Paint()..color = Colors.black.withValues(alpha: 0.6 * a),
+      );
+      // Empty track
+      canvas.drawRect(
+        Rect.fromLTWH(barX, barY, barW, barH),
+        Paint()..color = const Color(0xFF333333).withValues(alpha: a),
+      );
+      // Filled portion
+      if (ratio > 0) {
+        final fillColor = snail.snailType == SnailType.golden
+            ? const Color(0xFFFFD700)
+            : const Color(0xFFC0C0C0);
+        canvas.drawRect(
+          Rect.fromLTWH(barX, barY, barW * ratio, barH),
+          Paint()..color = fillColor.withValues(alpha: a),
+        );
+      }
+    }
+  }
+
+  /// Draw the trait-specific accessory in LOCAL snail canvas space.
+  void _drawSnailTrait(Canvas canvas, SnailTrait trait, double a, double t) {
+    switch (trait) {
+      case SnailTrait.none:
+        break;
+
+      case SnailTrait.armored:
+        // Steel helmet sitting atop the shell (~shell top at y=-14)
+        // Brim
+        _poly(canvas, [
+          const Offset(-1, -13), const Offset(9, -13),
+          const Offset(11, -11), const Offset(-3, -11),
+        ], Color(0xFF909090).withValues(alpha: a));
+        // Dome left face
+        _poly(canvas, [
+          const Offset(-1, -13), const Offset(4, -20),
+          const Offset(4, -13),
+        ], Color(0xFFCCCCCC).withValues(alpha: a));
+        // Dome right face
+        _poly(canvas, [
+          const Offset(4, -20), const Offset(9, -13),
+          const Offset(4, -13),
+        ], Color(0xFFAAAAAA).withValues(alpha: a));
+        // Dome top highlight
+        _poly(canvas, [
+          const Offset(1, -18), const Offset(4, -20),
+          const Offset(5, -18),
+        ], Color(0xFFEEEEEE).withValues(alpha: a));
+        // Visor slit
+        canvas.drawLine(
+          const Offset(0, -12), const Offset(8, -12),
+          Paint()..color = Color(0xFF333333).withValues(alpha: a)
+              ..strokeWidth = 1.5,
+        );
+        // Cheek guard left
+        _poly(canvas, [
+          const Offset(-3, -11), const Offset(-1, -11),
+          const Offset(-1, -8), const Offset(-3, -8),
+        ], Color(0xFF888888).withValues(alpha: a));
+        break;
+
+      case SnailTrait.runner:
+        // Legs extend UPWARD from the body top (y=0).
+        // Feet sit above the snail at y≈-20; legs connect down to body top.
+        final leftLift  =  sin(t * 7.0) * 5.0; // ±5 px vertical bob
+        final rightLift = -sin(t * 7.0) * 5.0; // opposite phase
+
+        // ── Left leg ──
+        // Foot anchor sits at lFootY (above body); leg runs down to y=0.
+        final lFootY = -20.0 + leftLift;
+        // Thigh: foot side → body side
+        _poly(canvas, [
+          Offset(-9.5, lFootY + 9), Offset(-5.5, lFootY + 9),
+          Offset(-5, 0), Offset(-9, 0),
+        ], Color(0xFFC4944A).withValues(alpha: a));
+        // Shin: foot → knee
+        _poly(canvas, [
+          Offset(-10.0, lFootY + 1), Offset(-6.0, lFootY + 1),
+          Offset(-5.5, lFootY + 9), Offset(-9.5, lFootY + 9),
+        ], Color(0xFFB88040).withValues(alpha: a));
+        // Left shoe sole
+        _poly(canvas, [
+          Offset(-13, lFootY + 1), Offset(-3, lFootY + 1),
+          Offset(-3,  lFootY - 4), Offset(-13, lFootY - 4),
+        ], Color(0xFF8B4513).withValues(alpha: a));
+        // Left toe cap
+        _poly(canvas, [
+          Offset(-3,  lFootY - 4), Offset(0.5, lFootY - 4),
+          Offset(0.5, lFootY - 1), Offset(-3,  lFootY - 1),
+        ], Color(0xFF8B4513).withValues(alpha: a));
+        // Left lace highlight
+        canvas.drawLine(
+          Offset(-13, lFootY), Offset(-3, lFootY),
+          Paint()..color = Color(0xFFFFFFFF).withValues(alpha: a * 0.4)
+              ..strokeWidth = 1.0,
+        );
+
+        // ── Right leg ──
+        final rFootY = -20.0 + rightLift;
+        // Thigh
+        _poly(canvas, [
+          Offset(0.5, rFootY + 9), Offset(4.5, rFootY + 9),
+          Offset(5, 0), Offset(1, 0),
+        ], Color(0xFFC4944A).withValues(alpha: a));
+        // Shin
+        _poly(canvas, [
+          Offset(1.0, rFootY + 1), Offset(5.0, rFootY + 1),
+          Offset(4.5, rFootY + 9), Offset(0.5, rFootY + 9),
+        ], Color(0xFFB88040).withValues(alpha: a));
+        // Right shoe sole
+        _poly(canvas, [
+          Offset(-1, rFootY + 1), Offset(9, rFootY + 1),
+          Offset(9, rFootY - 4), Offset(-1, rFootY - 4),
+        ], Color(0xFF6B3410).withValues(alpha: a));
+        // Right toe cap
+        _poly(canvas, [
+          Offset(9,  rFootY - 4), Offset(12.5, rFootY - 4),
+          Offset(12.5, rFootY - 1), Offset(9, rFootY - 1),
+        ], Color(0xFF6B3410).withValues(alpha: a));
+        // Right lace highlight
+        canvas.drawLine(
+          Offset(-1, rFootY), Offset(9, rFootY),
+          Paint()..color = Color(0xFFFFFFFF).withValues(alpha: a * 0.4)
+              ..strokeWidth = 1.0,
+        );
+        break;
+
+      case SnailTrait.sheltered:
+        // Umbrella held above the head (head is around x=-11, y=-2)
+        // Handle / stick
+        canvas.drawLine(
+          const Offset(-11, 0), const Offset(-11, -22),
+          Paint()..color = Color(0xFF6B3A10).withValues(alpha: a)
+              ..strokeWidth = 2.0
+              ..strokeCap = StrokeCap.round,
+        );
+        // Curved handle hook at bottom
+        canvas.drawArc(
+          Rect.fromCenter(
+              center: const Offset(-8, 1), width: 7, height: 6),
+          3.14, 3.14,
+          false,
+          Paint()..color = Color(0xFF6B3A10).withValues(alpha: a)
+              ..strokeWidth = 2.0
+              ..style = PaintingStyle.stroke
+              ..strokeCap = StrokeCap.round,
+        );
+        // Canopy main (3 panels alternating)
+        _poly(canvas, [
+          const Offset(-23, -21), const Offset(-11, -29),
+          const Offset(-11, -21),
+        ], Color(0xFFE53030).withValues(alpha: a));
+        _poly(canvas, [
+          const Offset(-11, -29), const Offset(1, -21),
+          const Offset(-11, -21),
+        ], Color(0xFFFFFFFF).withValues(alpha: a));
+        // Canopy highlight
+        _poly(canvas, [
+          const Offset(-20, -22), const Offset(-14, -26),
+          const Offset(-11, -22),
+        ], Color(0xFFFF8080).withValues(alpha: a * 0.5));
+        // Scallop edge
+        _poly(canvas, [
+          const Offset(-23, -21), const Offset(-18, -18),
+          const Offset(-14, -21),
+        ], Color(0xFFCC2020).withValues(alpha: a));
+        _poly(canvas, [
+          const Offset(-14, -21), const Offset(-11, -18),
+          const Offset(-8, -21),
+        ], Color(0xFFDDDDDD).withValues(alpha: a));
+        _poly(canvas, [
+          const Offset(-8, -21), const Offset(-5, -18),
+          const Offset(1, -21),
+        ], Color(0xFFCC2020).withValues(alpha: a));
+        // Canopy outline
+        final canopy = Path()
+          ..moveTo(-23, -21)
+          ..lineTo(-11, -29)
+          ..lineTo(1, -21)
+          ..close();
+        canvas.drawPath(
+          canopy,
+          Paint()..color = Color(0xFF991010).withValues(alpha: a)
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 0.8,
+        );
+        break;
+    }
   }
 
   /// Low-poly snail shell drawn in LOCAL canvas space (canvas already
   /// translated to the snail centre before this is called).
-  void _drawShellLocal(Canvas canvas, double sx, double sy, double alpha) {
+  void _drawShellLocal(Canvas canvas, double sx, double sy, double alpha,
+      List<Color> wedgeColors, List<Color> innerColors) {
     const int n = 8;
     const double r  = 11.5;
     const double ry = 9.0; // vertical squish for isometric feel
@@ -321,17 +584,6 @@ class GamePainter extends CustomPainter {
     // Slight spiral offset for visual center
     final center = Offset(sx + 2, sy + 2);
 
-    // Light from upper-left → bright at top, dark at bottom
-    const wedgeColors = [
-      Color(0xFFE09858), // top         – brightest
-      Color(0xFFD08040), // top-right
-      Color(0xFFB56A30), // right
-      Color(0xFF9B5520), // lower-right
-      Color(0xFF7B3B10), // bottom      – darkest
-      Color(0xFF8B4520), // lower-left
-      Color(0xFFC07030), // left
-      Color(0xFFD88848), // top-left
-    ];
     for (int i = 0; i < n; i++) {
       _poly(canvas, [center, rim[i], rim[(i + 1) % n]],
           wedgeColors[i].withValues(alpha: alpha));
@@ -345,11 +597,6 @@ class GamePainter extends CustomPainter {
           sy + sin(angle) * ry * 0.46 + 1.5);
     });
     final innerCenter = Offset(sx + 3, sy + 3);
-    const innerColors = [
-      Color(0xFF6B2B05), Color(0xFF5B1B00), Color(0xFF6B2B05),
-      Color(0xFF7B3B10), Color(0xFF8B4520), Color(0xFF7B3B10),
-      Color(0xFF6B2B05), Color(0xFF5B1B00),
-    ];
     for (int i = 0; i < n; i++) {
       _poly(canvas, [innerCenter, innerRim[i], innerRim[(i + 1) % n]],
           innerColors[i].withValues(alpha: alpha));
@@ -403,7 +650,11 @@ class GamePainter extends CustomPainter {
         _drawSaltTrap(canvas, center, weapon.trapKillsRemaining);
         break;
       case WeaponType.cryingEye:
-        _drawCryingEye(canvas, center, weapon.eyeTimeRemaining);
+        final eyeDrawPos = weapon.eyePos ?? center;
+        _drawCryingEye(canvas, eyeDrawPos, weapon.eyeTimeRemaining);
+        if (weapon.eyeLockProgress < 1.0) {
+          _drawEyeLockOn(canvas, eyeDrawPos, weapon.eyeLockProgress);
+        }
         break;
     }
   }
@@ -597,6 +848,131 @@ class GamePainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2,
     );
+  }
+
+  // ── Eye lock-on brackets ──────────────────────────────────────
+  // progress 0→1 across three phases:
+  //   0.00–0.45  scan  : outer ring sweeps in, rotating dashes
+  //   0.45–0.80  close : brackets converge, secondary ring
+  //   0.80–1.00  lock  : snap + crosshair flash, then fade to idle
+  void _drawEyeLockOn(Canvas canvas, Offset c, double progress) {
+    final p = progress.clamp(0.0, 1.0);
+
+    // ── helpers ──────────────────────────────────────────────────
+    double phase(double start, double end) =>
+        ((p - start) / (end - start)).clamp(0.0, 1.0);
+
+    // Phase eased values
+    final scanT  = Curves.easeOut.transform(phase(0.00, 0.45));
+    final closeT = Curves.easeInOut.transform(phase(0.45, 0.80));
+    final lockT  = Curves.easeOutBack.transform(phase(0.80, 1.00));
+
+    // After fully locked, fade everything out gently
+    final globalAlpha = p < 0.95 ? 1.0 : (1.0 - p) / 0.05;
+
+    final scanColor  = const Color(0xFFFFDD00);
+    final lockColor  = const Color(0xFFFF4400);
+    // Lerp from yellow → red as we lock
+    final bracketColor = Color.lerp(scanColor, lockColor, closeT)!
+        .withValues(alpha: globalAlpha);
+
+    // ── Phase 1: rotating outer scanner ring ─────────────────────
+    if (scanT > 0.0) {
+      final ringR = lerpDouble(52.0, 26.0, scanT)!;
+      final sweepAngle = scanT * 2 * pi; // arc sweeps from 0 → full circle
+      final rotAngle   = -pi / 2 + time * 2.8; // slow rotation
+
+      canvas.drawArc(
+        Rect.fromCenter(center: c, width: ringR * 2, height: ringR * 2),
+        rotAngle,
+        sweepAngle,
+        false,
+        Paint()
+          ..color = scanColor.withValues(alpha: scanT * 0.55 * globalAlpha)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.8,
+      );
+
+      // Counter-rotating short tick marks
+      final tickCount = 8;
+      for (int i = 0; i < tickCount; i++) {
+        final a = -rotAngle + i * 2 * pi / tickCount;
+        final inner = ringR - 4.0;
+        final outer = ringR + 3.0;
+        canvas.drawLine(
+          Offset(c.dx + cos(a) * inner, c.dy + sin(a) * inner),
+          Offset(c.dx + cos(a) * outer, c.dy + sin(a) * outer),
+          Paint()
+            ..color = scanColor.withValues(alpha: scanT * 0.45 * globalAlpha)
+            ..strokeWidth = 1.2,
+        );
+      }
+    }
+
+    // ── Phase 2: secondary tightening ring ───────────────────────
+    if (closeT > 0.0) {
+      final ring2R = lerpDouble(24.0, 14.0, closeT)!;
+      canvas.drawCircle(
+        c,
+        ring2R,
+        Paint()
+          ..color = bracketColor.withValues(alpha: closeT * 0.35 * globalAlpha)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.0,
+      );
+    }
+
+    // ── Brackets (phases 1–3, converge across close phase) ───────
+    {
+      final spread = lerpDouble(28.0, 11.0,
+          Curves.easeInOut.transform((scanT * 0.4 + closeT * 0.6).clamp(0.0, 1.0)))!;
+      // Arms grow in during scan, keep length during close
+      final arm = lerpDouble(0.0, 8.0, scanT)!;
+      // Stroke thickens at lock
+      final strokeW = lerpDouble(1.5, 2.5, lockT)!;
+
+      final bp = Paint()
+        ..color = bracketColor
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeW
+        ..strokeCap = StrokeCap.square;
+
+      final corners = [
+        Offset(c.dx - spread, c.dy - spread * 0.5),
+        Offset(c.dx + spread, c.dy - spread * 0.5),
+        Offset(c.dx + spread, c.dy + spread * 0.5),
+        Offset(c.dx - spread, c.dy + spread * 0.5),
+      ];
+      final hDirs = [-1.0,  1.0,  1.0, -1.0];
+      final vDirs = [-1.0, -1.0,  1.0,  1.0];
+
+      for (int i = 0; i < 4; i++) {
+        final o = corners[i];
+        canvas.drawLine(o, Offset(o.dx + hDirs[i] * arm, o.dy), bp);
+        canvas.drawLine(o, Offset(o.dx, o.dy + vDirs[i] * arm * 0.5), bp);
+      }
+    }
+
+    // ── Phase 3: crosshair + final snap ring ─────────────────────
+    if (lockT > 0.0) {
+      final snapAlpha = (lockT * (1.0 - lockT) * 4.0).clamp(0.0, 1.0); // peaks at 0.5
+      // Snap ring (expands outward on lock)
+      canvas.drawCircle(
+        c,
+        lerpDouble(0.0, 20.0, lockT)!,
+        Paint()
+          ..color = lockColor.withValues(alpha: snapAlpha * 0.6 * globalAlpha)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.5,
+      );
+      // Crosshair lines
+      final chA = (lockT * globalAlpha).clamp(0.0, 1.0);
+      final chP = Paint()
+        ..color = lockColor.withValues(alpha: chA * 0.8)
+        ..strokeWidth = 1.0;
+      canvas.drawLine(Offset(c.dx - 8, c.dy), Offset(c.dx + 8, c.dy), chP);
+      canvas.drawLine(Offset(c.dx, c.dy - 5), Offset(c.dx, c.dy + 5), chP);
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════

@@ -47,9 +47,11 @@ class _GameScreenState extends State<GameScreen>
 
     if (_joystickDelta != Offset.zero) {
       _cameraOffset += _joystickDelta * _panSpeed * dt;
+      final maxPanX = (_map.cols * IsometricMap.tileWidth);
+      final maxPanY = (_map.rows * IsometricMap.tileHeight);
       _cameraOffset = Offset(
-        _cameraOffset.dx.clamp(-640.0, 640.0),
-        _cameraOffset.dy.clamp(-320.0, 320.0),
+        _cameraOffset.dx.clamp(-maxPanX, maxPanX),
+        _cameraOffset.dy.clamp(-maxPanY, maxPanY),
       );
     }
 
@@ -103,7 +105,7 @@ class _GameScreenState extends State<GameScreen>
       color: const Color(0xFF16213E),
       child: Row(
         children: [
-          _hudItem(Icons.waves, 'Onda', '${_controller.wave}/5'),
+          _hudItem(Icons.waves, 'Onda', '${_controller.wave}'),
           const SizedBox(width: 16),
           _hudItem(Icons.star, 'Pontos', '${_controller.score}'),
           const Spacer(),
@@ -177,6 +179,11 @@ class _GameScreenState extends State<GameScreen>
               child: _JoystickWidget(
                 onMove: (delta) => _joystickDelta = delta,
               ),
+            ),
+          if (_controller.waveTransitioning)
+            _WaveTransitionOverlay(
+              wave: _controller.wave,
+              onComplete: _controller.beginWave,
             ),
           if (_controller.status == GameStatus.victory)
             _GameOverlay(
@@ -422,4 +429,229 @@ class _JoystickPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_JoystickPainter old) => old.thumb != thumb;
+}
+
+// ── Wave transition (fighting-game style) ───────────────────────────────────
+
+class _WaveTransitionOverlay extends StatefulWidget {
+  final int wave;
+  final VoidCallback onComplete;
+  const _WaveTransitionOverlay({required this.wave, required this.onComplete});
+
+  @override
+  State<_WaveTransitionOverlay> createState() => _WaveTransitionOverlayState();
+}
+
+class _WaveTransitionOverlayState extends State<_WaveTransitionOverlay>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  static double _c(double v) => v.clamp(0.0, 1.0);
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2600),
+    )
+      ..forward()
+      ..addStatusListener((s) {
+        if (s == AnimationStatus.completed) widget.onComplete();
+      });
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final sw = MediaQuery.of(context).size.width;
+    final sh = MediaQuery.of(context).size.height;
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (ctx, _) {
+        final t = _ctrl.value;
+
+        // Banners slide in 0→0.28, hold, slide out 0.73→1.00
+        final inF  = Curves.easeOutBack.transform(_c(t / 0.28));
+        final outF = Curves.easeIn.transform(_c((t - 0.73) / 0.27));
+        final leftX  = sw * (-1.0 + inF - outF);
+        final rightX = sw * ( 1.0 - inF + outF);
+
+        // White flash peaks at impact (t ≈ 0.28)
+        final flashRaw = _c(1.0 - ((t - 0.28) / 0.09).abs());
+        final flashA   = flashRaw * flashRaw; // sharper peak
+
+        // "LUTA!" elastic scale-in at t=0.37, fade out at t=0.64
+        final fightIn    = Curves.elasticOut.transform(_c((t - 0.37) / 0.24));
+        final fightAlpha = _c(1.0 - (t - 0.64) / 0.13);
+        final fightOpacity = (fightIn * fightAlpha).clamp(0.0, 1.0);
+
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            // Dark backdrop
+            const ColoredBox(color: Color(0x99000000)),
+
+            // "ONDA" banner — slides from left
+            Positioned(
+              top: sh / 2 - 90,
+              left: 0,
+              right: 0,
+              child: Transform.translate(
+                offset: Offset(leftX, 0),
+                child: _buildBanner(
+                  label: 'ONDA',
+                  color: const Color(0xFFBB1100),
+                  mirror: false,
+                  width: sw,
+                ),
+              ),
+            ),
+
+            // Wave-number banner — slides from right
+            Positioned(
+              top: sh / 2 + 18,
+              left: 0,
+              right: 0,
+              child: Transform.translate(
+                offset: Offset(rightX, 0),
+                child: _buildBanner(
+                  label: '${widget.wave}',
+                  color: const Color(0xFF001188),
+                  mirror: true,
+                  width: sw,
+                  large: true,
+                ),
+              ),
+            ),
+
+            // Impact flash
+            if (flashA > 0.01)
+              ColoredBox(
+                color: Color.fromARGB(
+                    (flashA * 200).round(), 255, 255, 220)),
+
+            // "LUTA!" punch-in
+            if (fightOpacity > 0.01)
+              Center(
+                child: Opacity(
+                  opacity: fightOpacity,
+                  child: Transform.scale(
+                    scale: fightIn.clamp(0.01, 1.18),
+                    child: const Text(
+                      'SAL NELES!',
+                      style: TextStyle(
+                        fontSize: 74,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.yellow,
+                        letterSpacing: 10,
+                        shadows: [
+                          Shadow(
+                              color: Color(0xFFFF2200), blurRadius: 28),
+                          Shadow(
+                              color: Color(0xFFFF8800),
+                              blurRadius: 56,
+                              offset: Offset(0, 6)),
+                          Shadow(color: Colors.black, blurRadius: 4),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildBanner({
+    required String label,
+    required Color color,
+    required bool mirror,
+    required double width,
+    bool large = false,
+  }) {
+    return CustomPaint(
+      painter: _WaveBannerPainter(color: color, mirror: mirror),
+      child: SizedBox(
+        width: width,
+        height: 72,
+        child: Center(
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: large ? 54 : 38,
+              fontWeight: FontWeight.w900,
+              color: Colors.white,
+              letterSpacing: large ? 4 : 18,
+              shadows: const [
+                Shadow(color: Colors.black, blurRadius: 8),
+                Shadow(
+                    color: Colors.black,
+                    blurRadius: 2,
+                    offset: Offset(2, 2)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _WaveBannerPainter extends CustomPainter {
+  final Color color;
+  final bool mirror;
+  const _WaveBannerPainter({required this.color, required this.mirror});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const skew = 30.0;
+    final w = size.width;
+    final h = size.height;
+
+    final path = mirror
+        ? (Path()
+          ..moveTo(0, 0)
+          ..lineTo(w - skew, 0)
+          ..lineTo(w, h)
+          ..lineTo(skew, h)
+          ..close())
+        : (Path()
+          ..moveTo(skew, 0)
+          ..lineTo(w, 0)
+          ..lineTo(w - skew, h)
+          ..lineTo(0, h)
+          ..close());
+
+    // Gradient fill
+    canvas.drawPath(
+      path,
+      Paint()
+        ..shader = LinearGradient(
+          colors: [color, Color.lerp(color, Colors.black, 0.45)!],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ).createShader(Offset.zero & size),
+    );
+
+    // Bright edge
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = Colors.white.withOpacity(0.28)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.5,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_WaveBannerPainter old) =>
+      old.color != color || old.mirror != mirror;
 }

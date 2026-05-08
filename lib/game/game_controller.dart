@@ -17,6 +17,7 @@ class GameController extends ChangeNotifier {
   int wave = 1;
   int score = 0;
   int lettuceHp = 5;
+  bool waveTransitioning = false;
 
   double _spawnTimer = 0.0;
   double _spawnInterval = 3.0;
@@ -28,6 +29,12 @@ class GameController extends ChangeNotifier {
 
   // Offset for rendering origin
   Offset renderOrigin = Offset.zero;
+  Offset _prevRenderOrigin = Offset.zero;
+
+  // Per-eye tracking: which snail each eye is chasing
+  final Map<Weapon, Snail> _eyeTargets = {};
+  final Map<Weapon, double> _eyeHoverTimers = {};
+  final Map<Weapon, Offset> _eyeWanderTargets = {};
 
   GameController({required this.map}) {
     _startWave();
@@ -42,6 +49,17 @@ class GameController extends ChangeNotifier {
 
   void update(double dt) {
     if (status != GameStatus.playing) return;
+
+    // Shift floating eye positions when renderOrigin changes (camera pan)
+    final originDelta = renderOrigin - _prevRenderOrigin;
+    if (originDelta.distance > 0.01) {
+      for (final w in weapons) {
+        if (w.type == WeaponType.cryingEye && w.eyePos != null) {
+          w.eyePos = w.eyePos! + originDelta;
+        }
+      }
+      _prevRenderOrigin = renderOrigin;
+    }
 
     _handleSpawning(dt);
     _updateSnails(dt);
@@ -68,7 +86,35 @@ class GameController extends ChangeNotifier {
       spawnPos[1],
       renderOrigin,
     );
-    snails.add(Snail(pathProgress: 0.0, speed: speed, screenPos: screen));
+
+    SnailType type = SnailType.normal;
+    final r = Random().nextDouble();
+    if (wave >= 6) {
+      if (r < 0.30)      type = SnailType.golden;
+      else if (r < 0.70) type = SnailType.silver;
+    } else if (wave >= 4) {
+      if (r < 0.20)      type = SnailType.golden;
+      else if (r < 0.50) type = SnailType.silver;
+    } else if (wave >= 2) {
+      if (r < 0.30)      type = SnailType.silver;
+    }
+
+    SnailTrait trait = SnailTrait.none;
+    if (wave >= 3) {
+      final t = Random().nextDouble();
+      final chance = wave >= 5 ? 0.25 : 0.15;
+      if (t < chance)           trait = SnailTrait.armored;
+      else if (t < chance * 2)  trait = SnailTrait.runner;
+      else if (t < chance * 3)  trait = SnailTrait.sheltered;
+    }
+
+    snails.add(Snail(
+      pathProgress: 0.0,
+      speed: speed,
+      screenPos: screen,
+      snailType: type,
+      trait: trait,
+    ));
   }
 
   void _updateSnails(double dt) {
@@ -147,25 +193,142 @@ class GameController extends ChangeNotifier {
           break;
       }
     }
+    for (final w in toRemove) {
+      _eyeTargets.remove(w);
+      _eyeHoverTimers.remove(w);
+      _eyeWanderTargets.remove(w);
+    }
     weapons.removeWhere((w) => toRemove.contains(w));
   }
 
   void _processCryingEye(Weapon eye, double dt) {
-    final eyeScreen = IsometricMap.gridToScreen(eye.col, eye.row, renderOrigin);
-    const range = 120.0;
-    for (final snail in snails) {
-      if (!snail.isAlive) continue;
-      final dist = (snail.screenPos - eyeScreen).distance;
-      if (dist <= range) {
-        snail.cryTimer = 0.3; // visual sob effect
-        snail.speed = max(snail.speed - 0.005 * dt, 0.01); // slow snail with tears
-        // Actually kill if eye is directly on snail tile
-        if (dist < 20) {
-          snail.kill();
-          score += 10;
+    final pathLen = map.spawnPath.length - 1;
+    if (pathLen <= 0) return;
+
+    // Home tile centre in screen space
+    final homeScreen = IsometricMap.gridToScreen(eye.col, eye.row, renderOrigin);
+    final home = homeScreen +
+        const Offset(IsometricMap.tileWidth / 2, IsometricMap.tileHeight / 2);
+    eye.eyePos ??= home;
+
+    // Find eye's nearest path index for range
+    int eyeIdx = -1;
+    for (int i = 0; i < map.spawnPath.length; i++) {
+      if (map.spawnPath[i][0] == eye.col && map.spawnPath[i][1] == eye.row) {
+        eyeIdx = i;
+        break;
+      }
+    }
+    if (eyeIdx < 0) {
+      double best = double.infinity;
+      for (int i = 0; i < map.spawnPath.length; i++) {
+        final s = IsometricMap.gridToScreen(
+            map.spawnPath[i][0], map.spawnPath[i][1], renderOrigin);
+        if ((s - home).distance < best) {
+          best = (s - home).distance;
+          eyeIdx = i;
         }
       }
     }
+    final eyeT = eyeIdx / pathLen;
+    const window = 3.0;
+    final rangeWindow = window / pathLen;
+
+    // Drop target if dead or out of range
+    Snail? target = _eyeTargets[eye];
+    if (target != null &&
+        (!target.isAlive ||
+            (target.pathProgress - eyeT).abs() > rangeWindow)) {
+      target = null;
+      _eyeTargets.remove(eye);
+      _eyeHoverTimers.remove(eye);
+    }
+
+    // Snails already claimed by another eye
+    final claimedSnails = _eyeTargets.entries
+        .where((e) => e.key != eye)
+        .map((e) => e.value)
+        .toSet();
+
+    // Acquire new target
+    if (target == null) {
+      target = snails
+          .where((s) =>
+              s.isAlive &&
+              !s.immuneToEye &&
+              !claimedSnails.contains(s) &&
+              (s.pathProgress - eyeT).abs() <= rangeWindow)
+          .fold<Snail?>(null, (best, s) =>
+              best == null || s.pathProgress > best.pathProgress ? s : best);
+      if (target != null) {
+        _eyeTargets[eye] = target;
+        final initialDist = max((eye.eyePos! - _snailAbovePos(target)).distance, 1.0);
+        final pathDist = (target.pathProgress - eyeT).abs() * pathLen;
+        eye.eyeLockDuration = (1.0 + pathDist / window * 2.0).clamp(1.0, 3.0);
+        eye.eyeLockDistance = initialDist;
+        // Speed ensures eye arrives in ~eyeLockDuration seconds
+        eye.eyeSpeed = initialDist / eye.eyeLockDuration * 1.2; // 1.2× to catch moving snail
+        eye.eyeLockProgress = 0.0;
+      }
+    }
+
+    if (target == null) {
+      // Wander slowly around home
+      _wanderEye(eye, home, dt);
+      eye.aimTarget = null;
+      return;
+    }
+
+    // Move toward above-center of the snail
+    final toTarget = _snailAbovePos(target) - eye.eyePos!;
+    final dist = toTarget.distance;
+    if (dist > 1.0) {
+      final step = min(eye.eyeSpeed * dt, dist);
+      eye.eyePos = eye.eyePos! + toTarget / dist * step;
+    }
+
+    // Lock progress advances as distance shrinks (never goes backwards)
+    final newProg = (1.0 - dist / eye.eyeLockDistance).clamp(0.0, 1.0);
+    eye.eyeLockProgress = max(eye.eyeLockProgress, newProg);
+
+    eye.aimTarget = null; // not used for eye drawing
+
+    // Slow effect
+    target.cryTimer = 0.4;
+    target.speed = max(target.speed - 0.006 * dt, 0.005);
+
+    // Kill on contact
+    if (dist < 16.0) {
+      target.kill();
+      score += target.scoreValue;
+      _eyeTargets.remove(eye);
+      _eyeHoverTimers.remove(eye);
+      eye.eyeLockProgress = 1.0;
+    }
+  }
+
+  /// Screen position just above the snail's visual centre.
+  Offset _snailAbovePos(Snail snail) => snail.screenPos +
+      const Offset(IsometricMap.tileWidth / 2, IsometricMap.tileHeight / 2 - 20);
+
+  void _wanderEye(Weapon eye, Offset home, double dt) {
+    final wTarget = _eyeWanderTargets[eye] ?? home;
+    if ((wTarget - eye.eyePos!).distance < 6.0) {
+      final rand = Random();
+      final angle = rand.nextDouble() * 2 * pi;
+      final radius = 8.0 + rand.nextDouble() * 16.0;
+      _eyeWanderTargets[eye] = home +
+          Offset(cos(angle) * radius, sin(angle) * radius * 0.5);
+    } else {
+      _eyeWanderTargets[eye] = wTarget;
+    }
+    final toWander = (_eyeWanderTargets[eye]! - eye.eyePos!);
+    const wanderSpeed = 22.0;
+    if (toWander.distance > 0.1) {
+      final step = min(wanderSpeed * dt, toWander.distance);
+      eye.eyePos = eye.eyePos! + toWander / toWander.distance * step;
+    }
+    eye.eyeLockProgress = 1.0;
   }
 
   /// Finds the closest living snail within range and stores its screen centre
@@ -175,7 +338,7 @@ class GameController extends ChangeNotifier {
     Snail? target;
     double minDist = double.infinity;
     for (final snail in snails) {
-      if (!snail.isAlive) continue;
+      if (!snail.isAlive || snail.immuneToGun) continue;
       final d = (snail.screenPos - gunScreen).distance;
       if (d < minDist) {
         minDist = d;
@@ -202,14 +365,29 @@ class GameController extends ChangeNotifier {
 
   void _processTrap(Weapon trap) {
     if (trap.trapKillsRemaining <= 0) return;
-    final trapScreen =
-        IsometricMap.gridToScreen(trap.col, trap.row, renderOrigin);
+
+    // Find where this trap sits on the path (by grid coords)
+    final pathLen = map.spawnPath.length - 1;
+    int trapIdx = -1;
+    for (int i = 0; i < map.spawnPath.length; i++) {
+      if (map.spawnPath[i][0] == trap.col && map.spawnPath[i][1] == trap.row) {
+        trapIdx = i;
+        break;
+      }
+    }
+    if (trapIdx < 0 || pathLen <= 0) return;
+
+    // Progress value that corresponds to the trap tile
+    final trapT = trapIdx / pathLen;
+    // Window = 1 tile's worth of progress on either side
+    final window = 1.0 / pathLen;
+
     for (final snail in snails) {
       if (!snail.isAlive) continue;
-      final dist = (snail.screenPos - trapScreen).distance;
-      if (dist < 24) {
+      if (snail.immuneToTrap) continue;
+      if ((snail.pathProgress - trapT).abs() <= window) {
         snail.kill();
-        score += 10;
+        score += snail.scoreValue;
         trap.trapKillsRemaining--;
         if (trap.trapKillsRemaining <= 0) break;
       }
@@ -226,8 +404,13 @@ class GameController extends ChangeNotifier {
         if (!snail.isAlive) continue;
         final dist = (snail.screenPos - p.position).distance;
         if (dist < 16) {
-          snail.kill();
-          score += 10;
+          if (snail.immuneToGun) {
+            // Projectile deflected – passes through without damage
+            break;
+          }
+          final wasAlive = snail.isAlive;
+          snail.damage(1);
+          if (wasAlive && !snail.isAlive) score += snail.scoreValue;
           p.active = false;
           break;
         }
@@ -245,26 +428,48 @@ class GameController extends ChangeNotifier {
   }
 
   void _checkWaveComplete() {
-    if (_snailsSpawned >= _snailsToSpawn && snails.isEmpty) {
-      if (wave >= 5) {
-        status = GameStatus.victory;
-      } else {
-        wave++;
-        score += 50;
-        lettuceHp = min(lettuceHp + 1, 5); // restore 1 HP per wave
-        _startWave();
-      }
+    if (!waveTransitioning && _snailsSpawned >= _snailsToSpawn && snails.isEmpty) {
+      wave++;
+      score += 50;
+      lettuceHp = min(lettuceHp + 1, 5); // restore 1 HP per wave
+      // Grow the map by one column or row
+      map.grow();
+      waveTransitioning = true;
       notifyListeners();
     }
+  }
+
+  /// Called by the UI after the wave transition animation completes.
+  void beginWave() {
+    waveTransitioning = false;
+    _startWave();
+    notifyListeners();
   }
 
   /// Called when user taps on a grid tile to place a weapon
   void placeWeapon(int col, int row) {
     if (status != GameStatus.playing) return;
-    // Don't place on path or lettuce
-    final isPath =
-        map.spawnPath.any((wp) => wp[0] == col && wp[1] == row);
-    if (isPath) return;
+
+    if (selectedWeapon == WeaponType.saltTrap) {
+      // Snap to the nearest path tile so inverse-isometric rounding can't miss
+      List<int>? nearest;
+      double nearestDist = double.infinity;
+      for (final wp in map.spawnPath) {
+        final d = ((wp[0] - col) * (wp[0] - col) + (wp[1] - row) * (wp[1] - row)).toDouble();
+        if (d < nearestDist) {
+          nearestDist = d;
+          nearest = wp;
+        }
+      }
+      if (nearest == null) return;
+      col = nearest[0];
+      row = nearest[1];
+    } else {
+      // Guns / eye go on non-path tiles only
+      final isPath = map.spawnPath.any((wp) => wp[0] == col && wp[1] == row);
+      if (isPath) return;
+    }
+
     // Don't stack
     final exists = weapons.any((w) => w.col == col && w.row == row);
     if (exists) return;

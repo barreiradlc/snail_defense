@@ -21,6 +21,21 @@ class Weapon {
   // Tracked snail screen position for aiming (updated every frame)
   Offset? aimTarget;
 
+  // Eye lock-on progress: 0 = just acquired, 1 = fully locked
+  double eyeLockProgress = 1.0;
+
+  // Eye lock-on duration in seconds (1–3 s, set when target is acquired)
+  double eyeLockDuration = 1.8;
+
+  // Initial distance to target when lock started (for progress calculation)
+  double eyeLockDistance = 1.0;
+
+  // Eye floating screen position (null = not yet initialised)
+  Offset? eyePos;
+
+  // Eye movement speed in screen px/s (set at acquisition)
+  double eyeSpeed = 0.0;
+
   Weapon({
     required this.type,
     required this.col,
